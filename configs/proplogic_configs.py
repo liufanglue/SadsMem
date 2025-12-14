@@ -206,7 +206,6 @@ class MEGA_config(BiRecurrentGRC_config):
         self.hidden_dropout = 0
         self.feature_dropout = 0
         self.norm_type = "layernorm"
-
         self.encoder_type = "MEGA"
         self.model_name = "(MEGA)"
 
@@ -225,10 +224,11 @@ class SadsNetWork_config(HEBT_GRC_config):
         self.labelDataDim = self.input_size
         self.hiddenDim = 300
         self.layerNum = 1
-        self.maxSeqLen = 30
-        self.splitPartNum = 25
-        self.crossLenRate = 0.01
+        self.maxSeqLen = 20
+        self.splitPartNum = 10
+        self.crossLenRate = 0
         self.maxLevelNum = 6
+        self.outputMaxNum = 6
         self.cacheSize = 4
         self.maxLoopCount = 1
         self.manualSeed = 42

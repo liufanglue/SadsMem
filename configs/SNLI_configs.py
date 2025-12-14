@@ -175,6 +175,7 @@ class SadsNetWork_config(HEBT_GRC_config):
         self.splitPartNum = 10
         self.crossLenRate = 0.01
         self.maxLevelNum = 6
+        self.outputMaxNum = 2
         self.cacheSize = 4
         self.maxLoopCount = 1
         self.manualSeed = 42
@@ -182,7 +183,6 @@ class SadsNetWork_config(HEBT_GRC_config):
         self.batchSize = self.batch_size * 2
         self.learnRate = 1e-3
         self.weightDecay = 1e-2
-
 
 class MambaNetWork_config(HEBT_GRC_config):
     def __init__(self):

@@ -218,7 +218,7 @@ class sentence_pair_framework(nn.Module):
         intermediate = F.dropout(intermediate, p=self.out_dropout, training=self.training)
         logits = self.prediction_linear2(intermediate)
 
-        assert logits.size() == (N, self.classes_num)
+        #assert logits.size() == (N, self.classes_num)
 
         return {"logits": logits, "aux_loss": aux_loss}
 

@@ -191,5 +191,5 @@ class classifier_framework(nn.Module):
         else:
             logits = self.prediction_linear(feats)
 
-        assert logits.size() == (N, self.classes_num)
+        #assert logits.size() == (N, self.classes_num)
         return {"logits": logits, "aux_loss": aux_loss}

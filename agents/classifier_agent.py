@@ -69,16 +69,28 @@ class classifier_agent:
             self.criterion = nn.BCEWithLogitsLoss(reduction='mean')
 
     # %%
-    def loss_fn(self, logits, labels, train=False, aux_loss=None):
-
+    def loss_fn(self, logits, labels, outputMaxNum, train=False, aux_loss=None):
         if self.config["classes_num"] == 2:
             labels = F.one_hot(labels, num_classes=2).float()
             labels = labels[..., 1].unsqueeze(-1)
 
-        loss = self.criterion(logits, labels)
+        if (outputMaxNum != 1):
+            #multi label liufanglue
+            losses = T.zeros(logits.shape[0], outputMaxNum)  # 存储每个样例的10个损失
+            for i in range(logits.shape[1]):  # 对每个输出结果
+                losses[ : , i] = self.criterion(logits[ : , i, : ], labels)
+                #losses[ : , i] = F.cross_entropy(logits[ : , i, : ], labels, reduction='none')
+            # 选择每个样例的最小损失
+            final_losses, minIndexs = T.min(losses, dim = 1)  # 每个样例的最小损失
+            loss = final_losses.mean()
+        else:
+            #single label liufanglue
+            loss = self.criterion(logits, labels)
+            minIndexs = None
+
         if aux_loss is not None and train:
             loss = loss + aux_loss
-        return loss
+        return loss, minIndexs
 
     # %%
     def beam_loss_fn(self, logits, labels, train=False, aux_loss=None):
@@ -159,8 +171,17 @@ class classifier_agent:
                 predictions = T.argmax(logits, dim=-1)
         else:
         """
-        loss = self.loss_fn(logits=logits, labels=labels,
-                            train=train, aux_loss=aux_loss)
+        if hasattr(self.model.encoder, 'outputMaxNum'):
+            loss, minIndexs = self.loss_fn(logits=logits, labels=labels, outputMaxNum = self.model.encoder.outputMaxNum, train=train, aux_loss=aux_loss)
+        else:
+            loss, minIndexs = self.loss_fn(logits=logits, labels=labels, outputMaxNum = 1, train=train, aux_loss=aux_loss)
+
+        #'''
+        #multi label liufanglue
+        if (minIndexs is not None):
+            logits = T.take_along_dim(logits, minIndexs.unsqueeze(1).unsqueeze(1).to(logits.device), dim = 1)
+            logits = logits.squeeze(1)
+        #'''
 
         if self.config["classes_num"] == 2:
             predictions = T.where(T.sigmoid(logits) >= 0.5,

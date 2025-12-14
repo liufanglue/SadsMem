@@ -58,21 +58,34 @@ class sentence_pair_agent:
         #self.criterion = nn.CrossEntropyLoss(reduction='mean')
         #'''
         if self.config["classes_num"] > 2:
-            self.criterion = nn.CrossEntropyLoss(reduction='mean')
+            self.criterion = nn.CrossEntropyLoss(reduction='none')
         else:
             self.criterion = nn.BCEWithLogitsLoss(reduction='mean')
         #'''
 
     # %%
-    def loss_fn(self, logits, labels, train=False, aux_loss=None):
+    def loss_fn(self, logits, labels, outputMaxNum, train=False, aux_loss=None):
         if self.config["classes_num"] == 2:
-            #labels invalid
             labels = F.one_hot(labels, num_classes=2).float()
             labels = labels[..., 1].unsqueeze(-1)
-        loss = self.criterion(logits, labels)
+
+        if (outputMaxNum != 1):
+            #multi label liufanglue
+            losses = T.zeros(logits.shape[0], outputMaxNum)  # 存储每个样例的10个损失
+            for i in range(logits.shape[1]):  # 对每个输出结果
+                losses[ : , i] = self.criterion(logits[ : , i, : ], labels)
+                #losses[ : , i] = F.cross_entropy(logits[ : , i, : ], labels, reduction = 'none')
+            # 选择每个样例的最小损失
+            final_losses, minIndexs = T.min(losses, dim = 1)  # 每个样例的最小损失
+            loss = final_losses.mean()
+        else:
+            #single label liufanglue
+            loss = self.criterion(logits, labels)
+            minIndexs = None
+
         if aux_loss is not None and train:
             loss = loss + aux_loss
-        return loss
+        return loss, minIndexs
 
     # %%
     def run(self, batch, train=True): #enter
@@ -98,9 +111,17 @@ class sentence_pair_agent:
         logits = output_dict["logits"]
         labels = batch["labels"].to(logits.device)
         aux_loss = output_dict["aux_loss"]
-        #print(f"run logits = {logits.shape}, labels = {labels.shape}")
-        loss = self.loss_fn(logits=logits, labels=labels,
-                            train=train, aux_loss=aux_loss)
+        if hasattr(self.model.encoder, 'outputMaxNum'):
+            loss, minIndexs = self.loss_fn(logits=logits, labels=labels, outputMaxNum = self.model.encoder.outputMaxNum, train=train, aux_loss=aux_loss)
+        else:
+            loss, minIndexs = self.loss_fn(logits=logits, labels=labels, outputMaxNum = 1, train=train, aux_loss=aux_loss)
+
+        #'''
+        #multi label liufanglue
+        if (minIndexs is not None):
+            logits = T.take_along_dim(logits, minIndexs.unsqueeze(1).unsqueeze(1).to(logits.device), dim = 1)
+            logits = logits.squeeze(1)
+        #'''
 
         if self.config["classes_num"] == 2:
             predictions = T.where(T.sigmoid(logits) >= 0.5,
@@ -109,8 +130,7 @@ class sentence_pair_agent:
             predictions = predictions.squeeze(-1)
         else:
             predictions = T.argmax(logits, dim=-1)
-            #print(f"logits = {logits}")
-        #print(f"predictions = {predictions.detach().cpu()}")
+
         predictions = predictions.detach().cpu().numpy().tolist()
 
         labels = batch["labels"].cpu().numpy().tolist()

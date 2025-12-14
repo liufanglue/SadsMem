@@ -2065,6 +2065,7 @@ class SadsNetWork(nn.Module):
         self.splitPartNum = config["splitPartNum"]
         self.crossLenRate = config["crossLenRate"]
         self.maxLevelNum = config["maxLevelNum"]
+        self.outputMaxNum = config["outputMaxNum"]
         self.cacheSize = config["cacheSize"]
         self.maxLoopCount = config["maxLoopCount"]
 
@@ -2101,7 +2102,7 @@ class SadsNetWork(nn.Module):
         '''
 
         #额叶
-        self.frontalLobe = RecurrentRnnNetWork(self.taskName, self.isBatchFirst, self.isNeedHidden, False, True, self.lobeLabelDim, self.trainDataNum, self.lobeLabelDim, self.hiddenDim, self.layerNum, self.maxSeqLen, self.splitPartNum, self.crossLenRate, self.maxLevelNum, self.manualSeed, self.batchSize, self.resDropRate, self.learnRate, self.weightDecay).to(self.device)
+        self.parietalLobe = RecurrentRnnNetWork(self.taskName, self.isBatchFirst, self.isNeedHidden, False, True, self.lobeLabelDim, self.trainDataNum, self.lobeLabelDim, self.hiddenDim, self.layerNum, self.maxSeqLen, self.splitPartNum, self.crossLenRate, self.maxLevelNum, self.manualSeed, self.batchSize, self.resDropRate, self.learnRate, self.weightDecay).to(self.device)
         #颞叶
         self.temporalLobe = RecurrentRnnNetWork(self.taskName, self.isBatchFirst, self.isNeedHidden, True, True, self.lobeLabelDim, self.trainDataNum, self.lobeLabelDim, self.hiddenDim, self.layerNum, self.maxSeqLen, self.splitPartNum, self.crossLenRate, self.maxLevelNum, self.manualSeed, self.batchSize, self.resDropRate, self.learnRate, self.weightDecay).to(self.device)
 
@@ -2112,6 +2113,7 @@ class SadsNetWork(nn.Module):
         self.summarizeCacheNum = BpNetWork(self.taskName, [self.cacheSize, self.hiddenDim, 1])
         #self.outResLinear = nn.Linear(self.lobeLabelDim, self.labelDataDim)
         self.outResLinear = BpNetWork(self.taskName, [self.lobeLabelDim, self.hiddenDim, self.labelDataDim])
+        self.multiOutputLayer = nn.Linear(self.labelDataDim, self.outputMaxNum * self.labelDataDim).to(self.device)
 
     def SetModel(self, model):
         self.model = model
@@ -2205,9 +2207,9 @@ class SadsNetWork(nn.Module):
         #print(f"SadsNetWork self.loopCount = {self.loopCount}, self.cacheSize = {self.cacheSize}")
 
         # 额叶处理
-        frontalOutput = self.frontalLobe(inputData, inputMask)['global_state']  # [batchSize, 1, hiddenDim]
-        #print(f"SadsNetWork frontalOutput = {frontalOutput.shape}")
-        cacheBuff.append(frontalOutput.unsqueeze(1))
+        parietalOutput = self.parietalLobe(inputData, inputMask)['global_state']  # [batchSize, 1, hiddenDim]
+        #print(f"SadsNetWork parietalOutput = {parietalOutput.shape}")
+        cacheBuff.append(parietalOutput.unsqueeze(1))
 
         for index in range(self.loopCount):
             #print(f"index = {index}")
@@ -2221,12 +2223,12 @@ class SadsNetWork(nn.Module):
 
             # 额叶处理
             if (index != self.loopCount - 1):
-                frontalOutput = self.GetCacheLobeCalRst(cacheBuff, self.frontalLobe)
-                #print(f"SadsNetWork frontalOutput = {frontalOutput.shape}")
-                cacheBuff.append(frontalOutput.unsqueeze(1))
+                parietalOutput = self.GetCacheLobeCalRst(cacheBuff, self.parietalLobe)
+                #print(f"SadsNetWork parietalOutput = {parietalOutput.shape}")
+                cacheBuff.append(parietalOutput.unsqueeze(1))
 
         # 额叶最后一次处理
-        outputData = self.GetCacheLobeCalRst(cacheBuff, self.frontalLobe, True)
+        outputData = self.GetCacheLobeCalRst(cacheBuff, self.parietalLobe, True)
         #print(f"SadsNetWork outputData = {outputData.shape}")
         #outputData = self.lobeToLabelDim(outputData)
         outputRes = self.outResLinear(inputData)
@@ -2251,11 +2253,19 @@ class SadsNetWork(nn.Module):
 
         #make_dot(outputData, params=dict(self.named_parameters())).render("GetSplitIndexList", format="png")
         #assert outputData.size() == (self.batchSize, self.labelDataNum, self.labelDataDim)
-        global_state = outputData[ : , -1 , : ]
-        #print(f"global_state = {global_state.shape}")
-        #print(f"global_state = {global_state}")
+        if (self.outputMaxNum != 1):
+            # multi output
+            multiOutput = self.multiOutputLayer(outputData)
+            outputData = multiOutput.view(inputData.shape[0], 1, self.outputMaxNum, -1)
+            outputData = F.softmax(outputData, dim = 2)
+            outputData = outputData.squeeze(1)
+            #print(f"input = {input.shape}, outputData = {outputData.shape}")
+        else:
+            # single output
+            outputData = outputData.squeeze(1)
+
         return {"sequence": inputData,
-        "global_state": global_state,
+        "global_state": outputData,
         "input_mask": inputMask,
         "aux_loss": None}
 
@@ -2306,8 +2316,8 @@ class SadsNetWork(nn.Module):
             for trainData, labelData in self.dataloader:
                 if hasattr(self, 'optimizer'):
                     self.optimizer.zero_grad()
-                if hasattr(self.frontalLobe, 'optimizer'):
-                    self.frontalLobe.optimizer.zero_grad()
+                if hasattr(self.parietalLobe, 'optimizer'):
+                    self.parietalLobe.optimizer.zero_grad()
                 if hasattr(self.temporalLobe, 'optimizer'):
                     self.temporalLobe.optimizer.zero_grad()
                 if (len(trainData.shape) == 3) and (len(labelData.shape) == 3):
@@ -2318,8 +2328,8 @@ class SadsNetWork(nn.Module):
                     loss.backward(retain_graph = True)
 
                     '''
-                    mergeParamDict = self.frontalLobe.GetModuleDictParameters('frontalLobe', self.frontalLobe.mergeModuleDict)
-                    self.frontalLobe.PrintDictGrad('frontalLobe', mergeParamDict)
+                    mergeParamDict = self.parietalLobe.GetModuleDictParameters('parietalLobe', self.parietalLobe.mergeModuleDict)
+                    self.parietalLobe.PrintDictGrad('parietalLobe', mergeParamDict)
                     mergeParamDict = self.temporalLobe.GetModuleDictParameters('temporalLobe', self.temporalLobe.mergeModuleDict)
                     self.temporalLobe.PrintDictGrad('temporalLobe', mergeParamDict)
                     for name, param in self.named_parameters():
@@ -2335,7 +2345,7 @@ class SadsNetWork(nn.Module):
                     #dot = make_dot(loss, params = dict(self.named_parameters()))
                     #dot.render(f"/home/ubuntu/BlackOp/loss_Rst")
                     #torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = 10)
-                    #torch.nn.utils.clip_grad_norm_(chain(self.parameters(), self.frontalLobe.parameters(), self.temporalLobe.parameters()), max_norm = 10)
+                    #torch.nn.utils.clip_grad_norm_(chain(self.parameters(), self.parietalLobe.parameters(), self.temporalLobe.parameters()), max_norm = 10)
                     self.optimizer.step()
                     trainLoss = loss.item()
                     #if self.scheduler:
